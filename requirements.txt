@@ -1,9 +1,6 @@
 streamlit==1.32.0
 pandas
-numpy==1.26.4 
-graphviz
+numpy==1.26.4https://github.com/skripsirian/Aplikasi-C45/blob/main/requirements.txt
 scikit-learn
-sklearn
-dtreeviz
-pydotplus
 matplotlib
+seaborn
