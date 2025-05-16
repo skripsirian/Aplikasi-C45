@@ -1,6 +1,6 @@
 streamlit==1.32.0
 pandas
-numpy==1.26.4https://github.com/skripsirian/Aplikasi-C45/blob/main/requirements.txt
+numpy==1.26.4
 scikit-learn
 matplotlib
 seaborn
