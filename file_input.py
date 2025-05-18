@@ -353,6 +353,10 @@ def show_file_input():
                 data = pd.read_csv(uploaded_file)
             else:
                 data = pd.read_excel(uploaded_file)
+                
+            # Extract file name without extension for table title
+            file_name = os.path.splitext(uploaded_file.name)[0]
+            st.session_state.table_title = file_name
         except Exception as e:
             st.error(f"Error membaca file: {str(e)}")
             return
@@ -381,6 +385,14 @@ def show_file_input():
         if 'No' not in data.columns:
             data.insert(0, 'No', range(1, len(data) + 1))
             
+        # Add Kelas column if it doesn't exist
+        if 'Kelas' not in data.columns:
+            # Add a text input for class as a simple attribute
+            default_kelas = st.text_input("Kelas untuk Semua Siswa:", value="Kelas 10")
+            
+            # Apply the selected class to all students as a simple attribute
+            data['Kelas'] = default_kelas
+            
         # Store the data in session state for later use
         if 'dataset' not in st.session_state:
             st.session_state.dataset = data
@@ -397,11 +409,18 @@ def show_file_input():
                 st.session_state.form_key = 0
                 
             with st.form(f"add_data_form_{st.session_state.form_key}"):
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     nama = st.text_input("Nama")
                 with col2:
                     jenis_kelamin = st.selectbox("Jenis Kelamin", ["Laki-laki", "Perempuan"])
+                with col3:
+                    # Use the same class as the dataset if available, otherwise provide default
+                    if 'dataset' in st.session_state and 'Kelas' in st.session_state.dataset.columns:
+                        default_kelas = st.session_state.dataset['Kelas'].iloc[0]
+                        kelas = st.text_input("Kelas", value=default_kelas)
+                    else:
+                        kelas = st.text_input("Kelas", value="Kelas 10")
                 
                 # Input for each component
                 st.write("Komponen Penilaian:")
@@ -443,6 +462,7 @@ def show_file_input():
                             'No': next_number,
                             'Nama': nama,
                             'Jenis Kelamin': jenis_kelamin,
+                            'Kelas': kelas,
                             'Keberagaman Teman': keberagaman,
                             'Kemampuan Komunikasi': komunikasi,
                             'Empati dan Pengertian': empati,
@@ -475,7 +495,11 @@ def show_file_input():
         
         # Display dataset with delete functionality
         if 'dataset' in st.session_state and len(st.session_state.dataset) > 0:
-            st.write("### Dataset:")
+            # Display table title if available
+            if 'table_title' in st.session_state:
+                st.write(f"### Dataset: {st.session_state.table_title}")
+            else:
+                st.write("### Dataset:")
             
             # Add delete functionality
             with st.expander("🗑️ Hapus Data"):
@@ -545,7 +569,7 @@ def show_file_input():
         data_for_model = data.copy()
         
         # Split features and target
-        X = data_for_model.drop(['target', 'Nama', 'Jenis Kelamin', 'No'], axis=1)
+        X = data_for_model.drop(['target', 'Nama', 'Jenis Kelamin', 'No', 'Kelas'], axis=1)
         y = data_for_model['target'].str.title()  # Normalize to Title case
         
         # Check class distribution
@@ -727,6 +751,7 @@ def show_file_input():
                 'No': st.session_state.test_data['No'] if 'No' in st.session_state.test_data.columns else range(1, len(st.session_state.test_data) + 1),
                 'Nama': st.session_state.test_data['Nama'],
                 'Jenis Kelamin': st.session_state.test_data['Jenis Kelamin'],
+                'Kelas': st.session_state.test_data['Kelas'],
                 'Rata-rata Skor': st.session_state.avg_scores.round(2),
                 'Aktual': st.session_state.y_test,
                 'Prediksi': st.session_state.preds,
