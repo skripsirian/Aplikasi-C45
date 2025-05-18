@@ -1,7 +1,9 @@
 streamlit==1.32.0
 pandas
-numpy==1.26.4
+numpy==1.26.4 
+graphviz
 scikit-learn
+sklearn
+dtreeviz
+pydotplus
 matplotlib
-seaborn
-openpyxl
