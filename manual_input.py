@@ -335,7 +335,11 @@ def show_manual_input():
     # Form for input
     with st.form("input_form"):
         nama_siswa = st.text_input("👤 Nama Siswa", placeholder="Masukkan nama siswa...")
-        jenis_kelamin = st.selectbox("👥 Jenis Kelamin", ["Laki-laki", "Perempuan"])
+        col1, col2 = st.columns(2)
+        with col1:
+            jenis_kelamin = st.selectbox("👥 Jenis Kelamin", ["Laki-laki", "Perempuan"])
+        with col2:
+            kelas = st.text_input("🏫 Kelas", placeholder="Contoh: Kelas 10", value="Kelas 10")
         
         # Display threshold information
         st.info("""
@@ -343,6 +347,18 @@ def show_manual_input():
         - Jika rata-rata skor ≥ 3.5: Kategori 'Tinggi'
         - Jika rata-rata skor < 3.5: Kategori 'Rendah'
         """)
+        
+        # Add rating scale explanation
+        with st.expander("📊 Penjelasan Skala Penilaian (1-5)", expanded=True):
+            st.markdown("""
+            | Nilai | Deskripsi |
+            | --- | --- |
+            | 1 | Sangat Kurang Baik |
+            | 2 | Kurang Baik |
+            | 3 | Cukup |
+            | 4 | Baik |
+            | 5 | Sangat Baik |
+            """)
         
         # Input sliders for each component
         keberagaman = st.slider("Keberagaman Teman", 1, 5, 3)
@@ -373,6 +389,7 @@ def show_manual_input():
         input_data = {
             'Nama': nama_siswa,
             'Jenis Kelamin': jenis_kelamin,
+            'Kelas': kelas,
             'Keberagaman Teman': keberagaman,
             'Kemampuan Komunikasi': komunikasi,
             'Empati dan Pengertian': empati,
@@ -397,6 +414,18 @@ def show_manual_input():
     if st.session_state.input_data_list:
         st.markdown("### 📊 Data yang Terkumpul")
         df_collected = pd.DataFrame(st.session_state.input_data_list)
+        
+        # Add Kelas column based on grade level (you can modify this as needed)
+        if 'Kelas' not in df_collected.columns:
+            # Add a text input for class as a simple attribute
+            default_kelas = st.text_input("Kelas untuk Semua Siswa:", value="Kelas 10")
+            
+            # Apply the selected class to all students as a simple attribute
+            df_collected['Kelas'] = default_kelas
+            
+            # Update the session state data with the class information
+            for i in range(len(st.session_state.input_data_list)):
+                st.session_state.input_data_list[i]['Kelas'] = default_kelas
         
         # Apply styling to the dataframe
         def color_target(val):
@@ -463,7 +492,7 @@ def show_manual_input():
                 st.session_state.classification_run = True
                 
                 # Prepare data for training
-                X = df_collected.drop(['target', 'Nama', 'Jenis Kelamin', 'Rata-rata Skor'], axis=1)
+                X = df_collected.drop(['target', 'Nama', 'Jenis Kelamin', 'Rata-rata Skor', 'Kelas'], axis=1)
                 y = df_collected['target']
 
                 # Split data with stratification if possible
