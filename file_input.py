@@ -9,6 +9,7 @@ import numpy as np
 import random
 import graphviz
 import re
+import io
 
 # Function to create decision tree visualization that matches the image
 def create_decision_tree_viz(tree):
@@ -242,9 +243,108 @@ def display_metrics(report, acc):
     except Exception as e:
         pass  # Abaikan error jika terjadi
 
+# Function to predict based on the leaf node where data falls
+def predict_from_leaf_node(instance, tree, node_path=None):
+    if node_path is None:
+        node_path = []
+    
+    # If we've reached a leaf node (not a dictionary)
+    if not isinstance(tree, dict):
+        return tree, node_path
+    
+    # Get the feature to split on
+    feature = list(tree.keys())[0]
+    
+    # Extract feature name and threshold if it contains a threshold
+    match = re.search(r'(.*?) <= (.*)', feature)
+    if match:
+        feature_name, threshold = match.groups()
+        feature_name = feature_name.strip()
+        threshold = float(threshold)
+        
+        # Get the actual value of this feature for the instance
+        instance_value = instance[feature_name]
+        
+        # Determine which branch to follow
+        if instance_value <= threshold:
+            node_path.append({
+                "feature": feature_name,
+                "threshold": threshold,
+                "instance_value": instance_value,
+                "decision": "≤",
+                "branch": "True",
+                "description": f"{feature_name} = {instance_value} ≤ {threshold} → True"
+            })
+            return predict_from_leaf_node(instance, tree[feature][list(tree[feature].keys())[0]], node_path)
+        else:
+            node_path.append({
+                "feature": feature_name,
+                "threshold": threshold,
+                "instance_value": instance_value,
+                "decision": ">",
+                "branch": "False",
+                "description": f"{feature_name} = {instance_value} > {threshold} → False"
+            })
+            return predict_from_leaf_node(instance, tree[feature][list(tree[feature].keys())[1]], node_path)
+    else:
+        # If there's no threshold, just follow the first branch
+        node_path.append({
+            "feature": feature,
+            "threshold": None,
+            "instance_value": None,
+            "decision": "",
+            "branch": "",
+            "description": f"Feature: {feature}"
+        })
+        return predict_from_leaf_node(instance, tree[feature][list(tree[feature].keys())[0]], node_path)
+
+# Function to get leaf node statistics
+def get_leaf_node_stats(tree, stats=None, path=None):
+    if stats is None:
+        stats = {}
+    if path is None:
+        path = []
+    
+    # If we've reached a leaf node
+    if not isinstance(tree, dict):
+        leaf_key = tuple(path)
+        stats[leaf_key] = {"class": tree, "path": path.copy()}
+        return stats
+    
+    feature = list(tree.keys())[0]
+    
+    # Extract feature name and threshold if applicable
+    match = re.search(r'(.*?) <= (.*)', feature)
+    if match:
+        feature_name, threshold = match.groups()
+        feature_name = feature_name.strip()
+        threshold = float(threshold)
+        
+        # Traverse left branch (≤ threshold)
+        left_path = path.copy()
+        left_path.append((feature, "≤", threshold, "True"))
+        stats = get_leaf_node_stats(tree[feature][list(tree[feature].keys())[0]], stats, left_path)
+        
+        # Traverse right branch (> threshold)
+        right_path = path.copy()
+        right_path.append((feature, ">", threshold, "False"))
+        stats = get_leaf_node_stats(tree[feature][list(tree[feature].keys())[1]], stats, right_path)
+    else:
+        # If there's no threshold
+        new_path = path.copy()
+        new_path.append((feature, "", "", ""))
+        stats = get_leaf_node_stats(tree[feature][list(tree[feature].keys())[0]], stats, new_path)
+    
+    return stats
+
 # Fungsi File Input & Klasifikasi
 def show_file_input():
     st.info("📤 Upload Dataset Mode")
+    
+    # Initialize classification state if not already set
+    if 'classification_run' not in st.session_state:
+        st.session_state.classification_run = False
+    
     uploaded_file = st.file_uploader("📂 Upload Dataset (.csv / .xlsx)", type=['csv', 'xlsx'])
 
     if uploaded_file:
@@ -277,12 +377,176 @@ def show_file_input():
             st.error(f"Error saat menghitung kategori: {str(e)}")
             return
 
-        st.write("Dataset:")
-        st.dataframe(data, use_container_width=True)
+        # Add numbering column if it doesn't exist
+        if 'No' not in data.columns:
+            data.insert(0, 'No', range(1, len(data) + 1))
+            
+        # Store the data in session state for later use
+        if 'dataset' not in st.session_state:
+            st.session_state.dataset = data
+        else:
+            # Keep existing dataset if it exists, only update if new file uploaded
+            pass
+            
+        # Add new data form
+        with st.expander("➕ Tambah Data Baru"):
+            st.write("Tambahkan data baru ke dataset:")
+            
+            # Initialize key for form
+            if 'form_key' not in st.session_state:
+                st.session_state.form_key = 0
+                
+            with st.form(f"add_data_form_{st.session_state.form_key}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    nama = st.text_input("Nama")
+                with col2:
+                    jenis_kelamin = st.selectbox("Jenis Kelamin", ["Laki-laki", "Perempuan"])
+                
+                # Input for each component
+                st.write("Komponen Penilaian:")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    keberagaman = st.slider("Keberagaman Teman", 1, 5, 3)
+                    komunikasi = st.slider("Kemampuan Komunikasi", 1, 5, 3)
+                    empati = st.slider("Empati dan Pengertian", 1, 5, 3)
+                    konflik = st.slider("Mengelola Konflik", 1, 5, 3)
+                
+                with col2:
+                    kerjasama = st.slider("Kerjasama dan Kolaborasi", 1, 5, 3)
+                    dukungan = st.slider("Dukungan Sosial", 1, 5, 3)
+                    kepemimpinan = st.slider("Kepemimpinan dan Tanggung Jawab", 1, 5, 3)
+                
+                # Calculate average score
+                scores = [keberagaman, komunikasi, empati, kerjasama, konflik, dukungan, kepemimpinan]
+                avg_score = sum(scores) / len(scores)
+                target = 'Tinggi' if avg_score >= 3.5 else 'Rendah'
+                
+                # Display calculated target
+                st.info(f"Rata-rata skor: {avg_score:.2f} → Kategori: {target}")
+                
+                submitted = st.form_submit_button("Tambahkan Data")
+                
+                if submitted:
+                    if not nama:
+                        st.error("Nama tidak boleh kosong!")
+                    else:
+                        # Determine the next number
+                        if 'dataset' in st.session_state and len(st.session_state.dataset) > 0 and 'No' in st.session_state.dataset.columns:
+                            next_number = st.session_state.dataset['No'].max() + 1
+                        else:
+                            next_number = 1
+                            
+                        # Create new data row
+                        new_data = {
+                            'No': next_number,
+                            'Nama': nama,
+                            'Jenis Kelamin': jenis_kelamin,
+                            'Keberagaman Teman': keberagaman,
+                            'Kemampuan Komunikasi': komunikasi,
+                            'Empati dan Pengertian': empati,
+                            'Kerjasama dan Kolaborasi': kerjasama,
+                            'Mengelola Konflik': konflik,
+                            'Dukungan Sosial': dukungan,
+                            'Kepemimpinan dan Tanggung Jawab': kepemimpinan,
+                            'target': target
+                        }
+                        
+                        # Add to the dataset
+                        new_df = pd.DataFrame([new_data])
+                        
+                        if 'dataset' not in st.session_state:
+                            st.session_state.dataset = new_df
+                        else:
+                            st.session_state.dataset = pd.concat([st.session_state.dataset, new_df], ignore_index=True)
+                        
+                        # Reset index for proper handling
+                        st.session_state.dataset = st.session_state.dataset.reset_index(drop=True)
+                        
+                        # Success message
+                        st.success(f"✅ Data untuk {nama} berhasil ditambahkan dengan nomor {next_number}!")
+                        
+                        # Increment form key to reset the form
+                        st.session_state.form_key += 1
+                        
+                        # Rerun to refresh the page
+                        st.rerun()
+        
+        # Display dataset with delete functionality
+        if 'dataset' in st.session_state and len(st.session_state.dataset) > 0:
+            st.write("### Dataset:")
+            
+            # Add delete functionality
+            with st.expander("🗑️ Hapus Data"):
+                st.write("Pilih data yang ingin dihapus berdasarkan nomor:")
+                
+                # Get list of available numbers
+                numbers = st.session_state.dataset['No'].tolist()
+                
+                # Create selection for deletion
+                number_to_delete = st.selectbox("Pilih nomor data yang akan dihapus:", numbers)
+                
+                if st.button("Hapus Data"):
+                    # Get the index of the row to delete
+                    idx_to_delete = st.session_state.dataset[st.session_state.dataset['No'] == number_to_delete].index
+                    
+                    if len(idx_to_delete) > 0:
+                        # Get name for confirmation message
+                        name_to_delete = st.session_state.dataset.loc[idx_to_delete[0], 'Nama']
+                        
+                        # Delete the row
+                        st.session_state.dataset = st.session_state.dataset.drop(idx_to_delete)
+                        
+                        # Reset index
+                        st.session_state.dataset = st.session_state.dataset.reset_index(drop=True)
+                        
+                        # Show success message
+                        st.success(f"✅ Data untuk {name_to_delete} (No. {number_to_delete}) berhasil dihapus!")
+                        
+                        # Rerun to refresh the page
+                        st.rerun()
+            
+            # Display the dataset
+            st.dataframe(st.session_state.dataset, use_container_width=True)
+        else:
+            st.write("Dataset:")
+            st.dataframe(data, use_container_width=True)
 
+        # Add option to download the updated dataset
+        if 'dataset' in st.session_state and len(st.session_state.dataset) > len(data):
+            col1, col2 = st.columns(2)
+            with col1:
+                csv = st.session_state.dataset.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Dataset (CSV)",
+                    data=csv,
+                    file_name="updated_dataset.csv",
+                    mime="text/csv"
+                )
+            with col2:
+                # Create Excel file in memory
+                output = io.BytesIO()
+                try:
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        st.session_state.dataset.to_excel(writer, index=False, sheet_name='Data')
+                    excel_data = output.getvalue()
+                    st.download_button(
+                        label="📥 Download Dataset (Excel)",
+                        data=excel_data,
+                        file_name="updated_dataset.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                except Exception as e:
+                    st.warning(f"Excel export tidak tersedia: {str(e)}")
+                    st.info("Silakan gunakan opsi CSV untuk mengunduh data.")
+
+        # Make a copy of data to avoid modifying the original
+        data_for_model = data.copy()
+        
         # Split features and target
-        X = data.drop(['target', 'Nama', 'Jenis Kelamin'], axis=1)
-        y = data['target'].str.title()  # Normalize to Title case
+        X = data_for_model.drop(['target', 'Nama', 'Jenis Kelamin', 'No'], axis=1)
+        y = data_for_model['target'].str.title()  # Normalize to Title case
         
         # Check class distribution
         class_counts = y.value_counts()
@@ -329,6 +593,10 @@ def show_file_input():
             for class_name, count in class_counts.items() 
             if count < min_samples_per_class
         ]
+        
+        # Reset index before splitting to ensure proper indexing
+        X = X.reset_index(drop=True)
+        y = y.reset_index(drop=True)
         
         # Split data into training and testing sets
         if insufficient_classes:
@@ -388,21 +656,46 @@ def show_file_input():
                     st.success(f"- {class_name}: {count} sampel ({percentage:.1f}%)")
 
         if st.button("Jalankan Klasifikasi"):
+            # Store a flag in session state to indicate classification has been run
+            st.session_state.classification_run = True
+            
             model = DecisionTreeC45()
             model.fit(X_train, y_train)
             
-            # Make predictions
-            preds = model.predict(X_test)
-            metrics, report = model.calculate_metrics(y_test, preds)
-            cm = model.get_confusion_matrix()
-
-            st.success("Klasifikasi selesai!")
+            # Make predictions using leaf node majority class
+            test_preds = []
+            prediction_paths = []
             
-            # Create results dataframe for test data
-            test_data = data.iloc[X_test.index]
+            # Get leaf node statistics
+            leaf_stats = get_leaf_node_stats(model.tree)
             
-            # Calculate average scores
-            feature_columns = [
+            # Predict each test instance
+            for idx, row in X_test.iterrows():
+                prediction, path = predict_from_leaf_node(row, model.tree)
+                test_preds.append(prediction)
+                prediction_paths.append(path)
+            
+            # Convert predictions to series for evaluation
+            preds = pd.Series(test_preds, index=X_test.index)
+            
+            # Calculate metrics using our custom predictions
+            from sklearn.metrics import classification_report, confusion_matrix
+            report = classification_report(y_test, preds, output_dict=True)
+            cm = confusion_matrix(y_test, preds, labels=['Rendah', 'Tinggi'])
+            metrics = {'accuracy': (preds == y_test).mean()}
+            
+            # Store everything in session state
+            st.session_state.model = model
+            st.session_state.test_data = data.iloc[X_test.index]
+            st.session_state.X_test = X_test
+            st.session_state.y_test = y_test
+            st.session_state.preds = preds
+            st.session_state.report = report
+            st.session_state.metrics = metrics
+            st.session_state.cm = cm
+            st.session_state.prediction_paths = prediction_paths
+            st.session_state.test_names = data.iloc[X_test.index]['Nama'].tolist()
+            st.session_state.feature_columns = [
                 'Keberagaman Teman',
                 'Kemampuan Komunikasi',
                 'Empati dan Pengertian',
@@ -411,22 +704,33 @@ def show_file_input():
                 'Dukungan Sosial',
                 'Kepemimpinan dan Tanggung Jawab'
             ]
-            avg_scores = test_data[feature_columns].mean(axis=1)
+            st.session_state.avg_scores = data.iloc[X_test.index][st.session_state.feature_columns].mean(axis=1)
             
-            # Display threshold information
-            st.write("\n### 🎯 Informasi Threshold")
+            # Generate and save confusion matrix plot
+            plot_confusion_matrix(cm)
+            
+            st.success("Klasifikasi selesai!")
+            st.rerun()  # Rerun to refresh the page with session state data
+        
+        # Check if classification has been run and display results
+        if 'classification_run' in st.session_state and st.session_state.classification_run:
+            # Display information about the prediction process
+            st.markdown("### 🌲 Informasi Prediksi Berdasarkan Leaf Node")
             st.info("""
-            Threshold yang digunakan untuk menentukan kategori:
-            - Jika rata-rata skor ≥ 3.5: Kategori 'Tinggi'
-            - Jika rata-rata skor < 3.5: Kategori 'Rendah'
+            Prediksi dilakukan berdasarkan kelas mayoritas pada leaf node tempat data jatuh.
+            Setiap data akan ditelusuri melalui pohon keputusan hingga mencapai leaf node,
+            kemudian kelas mayoritas pada leaf node tersebut akan digunakan sebagai hasil prediksi.
             """)
             
+            # Create results dataframe with No column
             results_df = pd.DataFrame({
-                'Nama': test_data['Nama'],
-                'Jenis Kelamin': test_data['Jenis Kelamin'],
-                'Rata-rata Skor': avg_scores.round(2),
-                'Aktual': y_test,
-                'Prediksi': preds
+                'No': st.session_state.test_data['No'] if 'No' in st.session_state.test_data.columns else range(1, len(st.session_state.test_data) + 1),
+                'Nama': st.session_state.test_data['Nama'],
+                'Jenis Kelamin': st.session_state.test_data['Jenis Kelamin'],
+                'Rata-rata Skor': st.session_state.avg_scores.round(2),
+                'Aktual': st.session_state.y_test,
+                'Prediksi': st.session_state.preds,
+                'Benar/Salah': st.session_state.y_test == st.session_state.preds
             })
 
             def color_pred(val):
@@ -441,43 +745,377 @@ def show_file_input():
                 if val >= 3.5:  # Fixed threshold
                     return 'background-color: rgba(40, 167, 69, 0.2)'
                 return 'background-color: rgba(220, 53, 69, 0.2)'
+                
+            # Add result styling
+            def color_result(val):
+                if val == True:
+                    return 'background-color: #28a745; color: white'
+                else:
+                    return 'background-color: #dc3545; color: white'
 
             styled_results = results_df.style\
                 .applymap(color_pred, subset=['Prediksi', 'Aktual'])\
-                .applymap(color_score, subset=['Rata-rata Skor'])
+                .applymap(color_score, subset=['Rata-rata Skor'])\
+                .applymap(color_result, subset=['Benar/Salah'])
+            
+            # Display threshold information
+            st.write("\n### 🎯 Informasi Threshold")
+            st.info("""
+            Threshold yang digunakan untuk menentukan kategori:
+            - Jika rata-rata skor ≥ 3.5: Kategori 'Tinggi'
+            - Jika rata-rata skor < 3.5: Kategori 'Rendah'
+            """)
             
             # Display total tested data
-            st.write(f"### 📊 Total Data yang Diuji: {len(X_test)}")
+            st.write(f"### 📊 Total Data yang Diuji: {len(st.session_state.X_test)}")
             st.write("Hasil Prediksi (Data Testing):")
             st.dataframe(styled_results, use_container_width=True)
 
             st.markdown("### Evaluasi Model")
-            display_metrics(report, metrics['accuracy']*100)
+            display_metrics(st.session_state.report, st.session_state.metrics['accuracy']*100)
 
-            plot_confusion_matrix(cm)
+            # Display confusion matrix image
             st.image('temp/confusion_matrix.png')
             
             # Display confusion matrix summary
             st.write("\n### 📑 Ringkasan Confusion Matrix")
-            total_samples = np.sum(cm)
+            total_samples = np.sum(st.session_state.cm)
             for i, actual_class in enumerate(['Rendah', 'Tinggi']):
                 for j, pred_class in enumerate(['Rendah', 'Tinggi']):
-                    count = cm[i, j]
+                    count = st.session_state.cm[i, j]
                     percentage = (count / total_samples) * 100
                     if actual_class == pred_class:
                         st.success(f"✅ {actual_class} diprediksi benar sebagai {pred_class}: {count} data ({percentage:.1f}%)")
                     else:
                         st.error(f"❌ {actual_class} diprediksi salah sebagai {pred_class}: {count} data ({percentage:.1f}%)")
+            
+            # Show detailed prediction path for a sample
+            st.markdown("### 🛣️ Contoh Jalur Prediksi")
+            if len(st.session_state.prediction_paths) > 0:
+                selected_name = st.selectbox("Pilih data untuk melihat jalur prediksi:", 
+                                          st.session_state.test_names,
+                                          key="selected_name_path")
+                
+                selected_idx = st.session_state.test_names.index(selected_name)
+                selected_path = st.session_state.prediction_paths[selected_idx]
+                selected_data = st.session_state.X_test.iloc[selected_idx]
+                selected_prediction = st.session_state.preds.iloc[selected_idx]
+                selected_actual = st.session_state.y_test.iloc[selected_idx]
+                
+                # Display the selected instance's values
+                st.markdown(f"#### Data untuk: {selected_name}")
+                
+                # Format the feature values as a horizontal card layout
+                cols = st.columns(len(selected_data))
+                for i, (feature, value) in enumerate(selected_data.items()):
+                    with cols[i]:
+                        st.metric(label=feature, value=value)
+                
+                # Create a detailed path visualization
+                st.markdown("#### Jalur Prediksi:")
+                
+                # Create a step-by-step visualization
+                for i, step in enumerate(selected_path):
+                    with st.container():
+                        col1, col2, col3 = st.columns([1, 3, 1])
+                        with col1:
+                            st.markdown(f"**Langkah {i+1}**")
+                        with col2:
+                            # Format the decision nicely
+                            if step["decision"]:
+                                feature_name = step["feature"]
+                                instance_value = step["instance_value"]
+                                threshold = step["threshold"]
+                                decision = step["decision"]
+                                branch = "Ya" if step["branch"] == "True" else "Tidak"
+                                
+                                # Color code the decision
+                                if decision == "≤":
+                                    st.markdown(f"""
+                                    <div style='padding: 0.5rem; border-radius: 0.5rem; border: 1px solid #ddd; background-color: #f8f9fa;'>
+                                        <span style='font-weight: bold;'>{feature_name}</span> = {instance_value} {decision} {threshold}?
+                                        <span style='color: {'green' if branch == "Ya" else 'red'}; font-weight: bold;'>{branch}</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                else:
+                                    st.markdown(f"""
+                                    <div style='padding: 0.5rem; border-radius: 0.5rem; border: 1px solid #ddd; background-color: #f8f9fa;'>
+                                        <span style='font-weight: bold;'>{feature_name}</span> = {instance_value} {decision} {threshold}?
+                                        <span style='color: {'green' if branch == "Ya" else 'red'}; font-weight: bold;'>{branch}</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                        with col3:
+                            # Show the branch direction
+                            if step["branch"] == "True":
+                                st.markdown("⬇️ Cabang Kiri")
+                            elif step["branch"] == "False":
+                                st.markdown("⬇️ Cabang Kanan")
+                
+                # Show the final prediction
+                st.markdown("#### Hasil Prediksi:")
+                col1, col2 = st.columns(2)
+                with col1:
+                    color = "#28a745" if selected_prediction == "Tinggi" else "#dc3545"
+                    st.markdown(f"""
+                    <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color}; color: white; text-align: center;'>
+                        <h4>Prediksi: {selected_prediction}</h4>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col2:
+                    color = "#28a745" if selected_actual == "Tinggi" else "#dc3545"
+                    st.markdown(f"""
+                    <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color}; color: white; text-align: center;'>
+                        <h4>Aktual: {selected_actual}</h4>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # Show whether the prediction was correct
+                is_correct = selected_prediction == selected_actual
+                color = "#28a745" if is_correct else "#dc3545"
+                icon = "✅" if is_correct else "❌"
+                st.markdown(f"""
+                <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color}; color: white; text-align: center;'>
+                    <h4>{icon} Prediksi {'Benar' if is_correct else 'Salah'}</h4>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Add what-if analysis section
+                st.markdown("### 🔄 Simulasi Perubahan Variabel")
+                st.info("Ubah nilai variabel untuk melihat bagaimana prediksi berubah")
+                
+                # Create a form for what-if analysis
+                with st.form("what_if_form"):
+                    # Create a copy of the selected data for modification
+                    modified_data = selected_data.copy()
+                    
+                    # Create sliders for each feature
+                    st.markdown("#### Ubah Nilai Variabel:")
+                    cols = st.columns(2)
+                    
+                    features = list(modified_data.index)
+                    modified_values = {}
+                    
+                    for i, feature in enumerate(features):
+                        with cols[i % 2]:
+                            modified_values[feature] = st.slider(
+                                f"{feature}", 
+                                min_value=1, 
+                                max_value=5, 
+                                value=int(modified_data[feature]),
+                                key=f"what_if_{feature}"
+                            )
+                    
+                    # Submit button
+                    submitted = st.form_submit_button("Simulasikan Perubahan")
+                    
+                    if submitted:
+                        # Update the modified data
+                        for feature, value in modified_values.items():
+                            modified_data[feature] = value
+                        
+                        # Make a new prediction
+                        new_prediction, new_path = predict_from_leaf_node(modified_data, st.session_state.model.tree)
+                        
+                        # Store the results
+                        st.session_state.what_if_prediction = new_prediction
+                        st.session_state.what_if_path = new_path
+                        st.session_state.what_if_data = modified_data
+                        st.rerun()
+                
+                # Display what-if results if available
+                if 'what_if_prediction' in st.session_state:
+                    st.markdown("#### Hasil Simulasi:")
+                    
+                    # Compare original and modified values
+                    st.markdown("##### Perbandingan Nilai:")
+                    comparison_df = pd.DataFrame({
+                        'Variabel': features,
+                        'Nilai Asli': [selected_data[f] for f in features],
+                        'Nilai Baru': [st.session_state.what_if_data[f] for f in features],
+                        'Perubahan': [st.session_state.what_if_data[f] - selected_data[f] for f in features]
+                    })
+                    
+                    # Style the comparison dataframe
+                    def color_change(val):
+                        if val > 0:
+                            return 'background-color: rgba(40, 167, 69, 0.2)'
+                        elif val < 0:
+                            return 'background-color: rgba(220, 53, 69, 0.2)'
+                        return ''
+                    
+                    styled_comparison = comparison_df.style.applymap(color_change, subset=['Perubahan'])
+                    st.dataframe(styled_comparison, use_container_width=True)
+                    
+                    # Show the new prediction
+                    st.markdown("##### Prediksi Baru:")
+                    color = "#28a745" if st.session_state.what_if_prediction == "Tinggi" else "#dc3545"
+                    st.markdown(f"""
+                    <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color}; color: white; text-align: center;'>
+                        <h4>Prediksi Baru: {st.session_state.what_if_prediction}</h4>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Show if the prediction changed
+                    if st.session_state.what_if_prediction != selected_prediction:
+                        st.success(f"✅ Prediksi berubah dari {selected_prediction} menjadi {st.session_state.what_if_prediction}")
+                    else:
+                        st.info(f"ℹ️ Prediksi tetap sama: {selected_prediction}")
+            
+            # Add friendship compatibility analysis
+            st.markdown("### 👫 Analisis Kesesuaian Pertemanan")
+            st.info("Analisis kesesuaian pertemanan berdasarkan pola yang ditemukan oleh model")
+            
+            # Create a form for friendship compatibility
+            with st.form("friendship_compatibility_form"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    person1 = st.selectbox("Pilih Orang Pertama:", st.session_state.test_names, key="person1")
+                
+                with col2:
+                    person2 = st.selectbox("Pilih Orang Kedua:", st.session_state.test_names, key="person2")
+                
+                analyze_button = st.form_submit_button("Analisis Kesesuaian")
+                
+                if analyze_button:
+                    if person1 == person2:
+                        st.warning("⚠️ Pilih dua orang yang berbeda untuk analisis kesesuaian")
+                    else:
+                        # Get the indices of the selected people
+                        idx1 = st.session_state.test_data[st.session_state.test_data['Nama'] == person1].index[0]
+                        idx2 = st.session_state.test_data[st.session_state.test_data['Nama'] == person2].index[0]
+                        
+                        # Get the data for both people
+                        data1 = st.session_state.X_test.loc[idx1]
+                        data2 = st.session_state.X_test.loc[idx2]
+                        
+                        # Get their predictions
+                        pred1 = st.session_state.preds.loc[idx1]
+                        pred2 = st.session_state.preds.loc[idx2]
+                        
+                        # Store the results
+                        st.session_state.person1_data = data1
+                        st.session_state.person2_data = data2
+                        st.session_state.person1_name = person1
+                        st.session_state.person2_name = person2
+                        st.session_state.person1_pred = pred1
+                        st.session_state.person2_pred = pred2
+                        st.rerun()
+            
+            # Display compatibility analysis if available
+            if hasattr(st.session_state, 'person1_data') and hasattr(st.session_state, 'person2_data'):
+                st.markdown("#### Hasil Analisis Kesesuaian:")
+                
+                # Compare the data
+                st.markdown("##### Perbandingan Profil:")
+                
+                # Create comparison dataframe
+                features = st.session_state.person1_data.index.tolist()
+                comparison_df = pd.DataFrame({
+                    'Variabel': features,
+                    f'{st.session_state.person1_name}': [st.session_state.person1_data[f] for f in features],
+                    f'{st.session_state.person2_name}': [st.session_state.person2_data[f] for f in features],
+                    'Perbedaan': [abs(st.session_state.person1_data[f] - st.session_state.person2_data[f]) for f in features]
+                })
+                
+                # Style the comparison dataframe
+                def color_difference(val):
+                    if val == 0:
+                        return 'background-color: rgba(40, 167, 69, 0.4)'
+                    elif val <= 1:
+                        return 'background-color: rgba(255, 193, 7, 0.2)'
+                    else:
+                        return 'background-color: rgba(220, 53, 69, 0.2)'
+                
+                styled_comparison = comparison_df.style.applymap(color_difference, subset=['Perbedaan'])
+                st.dataframe(styled_comparison, use_container_width=True)
+                
+                # Calculate compatibility score (inverse of average difference)
+                avg_difference = comparison_df['Perbedaan'].mean()
+                compatibility_score = max(0, 100 - (avg_difference * 20))  # Scale to 0-100
+                
+                # Display compatibility score
+                st.markdown("##### Skor Kesesuaian:")
+                
+                # Determine compatibility level
+                if compatibility_score >= 80:
+                    compatibility_level = "Sangat Tinggi"
+                    color = "#28a745"
+                elif compatibility_score >= 60:
+                    compatibility_level = "Tinggi"
+                    color = "#5cb85c"
+                elif compatibility_score >= 40:
+                    compatibility_level = "Sedang"
+                    color = "#ffc107"
+                elif compatibility_score >= 20:
+                    compatibility_level = "Rendah"
+                    color = "#f0ad4e"
+                else:
+                    compatibility_level = "Sangat Rendah"
+                    color = "#dc3545"
+                
+                st.markdown(f"""
+                <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color}; color: white; text-align: center;'>
+                    <h3>Skor Kesesuaian: {compatibility_score:.1f}%</h3>
+                    <h4>Tingkat Kesesuaian: {compatibility_level}</h4>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Display predictions for both people
+                st.markdown("##### Prediksi Pola Pertemanan:")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    color1 = "#28a745" if st.session_state.person1_pred == "Tinggi" else "#dc3545"
+                    st.markdown(f"""
+                    <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color1}; color: white; text-align: center;'>
+                        <h4>{st.session_state.person1_name}: {st.session_state.person1_pred}</h4>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                with col2:
+                    color2 = "#28a745" if st.session_state.person2_pred == "Tinggi" else "#dc3545"
+                    st.markdown(f"""
+                    <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color2}; color: white; text-align: center;'>
+                        <h4>{st.session_state.person2_name}: {st.session_state.person2_pred}</h4>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # Provide recommendation based on compatibility and predictions
+                st.markdown("##### Rekomendasi:")
+                
+                if compatibility_score >= 60:
+                    if st.session_state.person1_pred == "Tinggi" and st.session_state.person2_pred == "Tinggi":
+                        st.success(f"✅ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki kesesuaian yang baik dan keduanya memiliki pola pertemanan yang tinggi. Mereka sangat cocok untuk berteman.")
+                    elif st.session_state.person1_pred == "Tinggi" or st.session_state.person2_pred == "Tinggi":
+                        st.info(f"ℹ️ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki kesesuaian yang baik, tetapi salah satu memiliki pola pertemanan yang lebih tinggi. Mereka dapat saling membantu dalam mengembangkan keterampilan sosial.")
+                    else:
+                        st.warning(f"⚠️ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki kesesuaian yang baik, tetapi keduanya memiliki pola pertemanan yang rendah. Mereka mungkin nyaman bersama tetapi perlu mengembangkan keterampilan sosial.")
+                else:
+                    if st.session_state.person1_pred == "Tinggi" and st.session_state.person2_pred == "Tinggi":
+                        st.warning(f"⚠️ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki perbedaan yang signifikan meskipun keduanya memiliki pola pertemanan yang tinggi. Mereka mungkin memiliki gaya pertemanan yang berbeda.")
+                    elif st.session_state.person1_pred == "Tinggi" or st.session_state.person2_pred == "Tinggi":
+                        st.warning(f"⚠️ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki perbedaan yang signifikan dan salah satu memiliki pola pertemanan yang lebih tinggi. Mereka mungkin menghadapi tantangan dalam berteman.")
+                    else:
+                        st.error(f"❌ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki perbedaan yang signifikan dan keduanya memiliki pola pertemanan yang rendah. Mereka mungkin mengalami kesulitan dalam membangun pertemanan yang baik.")
 
             st.subheader("Pohon Keputusan:")
             # Create and display decision tree visualization
-            dot = create_decision_tree_viz(model.tree)
+            dot = create_decision_tree_viz(st.session_state.model.tree)
             st.graphviz_chart(dot, use_container_width=True)
             
             # Also show text representation for debugging
             with st.expander("Lihat Representasi Teks Pohon Keputusan"):
-                tree_text = convert_tree_to_text(model.tree)
+                tree_text = convert_tree_to_text(st.session_state.model.tree)
                 st.code(tree_text)
+            
+            # Add a button to clear results and run classification again
+            if st.button("🔄 Reset dan Jalankan Klasifikasi Ulang"):
+                # Clear all session state variables related to classification
+                for key in list(st.session_state.keys()):
+                    if key != 'dataset' and key != 'form_key':
+                        del st.session_state[key]
+                st.rerun()
 
 if __name__ == "__main__":
     st.set_page_config(page_title="Klasifikasi C4.5 - Pola Pertemanan Siswa", layout="wide")
