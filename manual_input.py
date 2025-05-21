@@ -361,13 +361,19 @@ def show_manual_input():
             """)
         
         # Input sliders for each component
-        keberagaman = st.slider("Keberagaman Teman", 1, 5, 3)
-        komunikasi = st.slider("Kemampuan Komunikasi", 1, 5, 3)
-        empati = st.slider("Empati & Pengertian", 1, 5, 3)
-        kerjasama = st.slider("Kerjasama & Kolaborasi", 1, 5, 3)
-        konflik = st.slider("Mengelola Konflik", 1, 5, 3)
-        dukungan = st.slider("Dukungan Sosial", 1, 5, 3)
-        kepemimpinan = st.slider("Kepemimpinan & Tanggung Jawab", 1, 5, 3)
+        st.markdown("#### 📊 Komponen Penilaian")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            keberagaman = st.slider("Keberagaman Teman", 1, 5, 3)
+            komunikasi = st.slider("Kemampuan Komunikasi", 1, 5, 3)
+            empati = st.slider("Empati & Pengertian", 1, 5, 3)
+            kerjasama = st.slider("Kerjasama & Kolaborasi", 1, 5, 3)
+        
+        with col2:
+            konflik = st.slider("Mengelola Konflik", 1, 5, 3)
+            dukungan = st.slider("Dukungan Sosial", 1, 5, 3)
+            kepemimpinan = st.slider("Kepemimpinan & Tanggung Jawab", 1, 5, 3)
         
         # Calculate average score and determine target
         scores = [keberagaman, komunikasi, empati, kerjasama, konflik, dukungan, kepemimpinan]
