@@ -341,13 +341,6 @@ def show_manual_input():
         with col2:
             kelas = st.text_input("🏫 Kelas", placeholder="Contoh: Kelas 10", value="Kelas 10")
         
-        # Display threshold information
-        st.info("""
-        ℹ️ Target akan dihitung otomatis berdasarkan rata-rata skor:
-        - Jika rata-rata skor ≥ 3.5: Kategori 'Tinggi'
-        - Jika rata-rata skor < 3.5: Kategori 'Rendah'
-        """)
-        
         # Add rating scale explanation
         with st.expander("📊 Penjelasan Skala Penilaian (1-5)", expanded=True):
             st.markdown("""
@@ -358,6 +351,10 @@ def show_manual_input():
             | 3 | Cukup |
             | 4 | Baik |
             | 5 | Sangat Baik |
+            
+            ℹ️ **Target akan dihitung otomatis berdasarkan rata-rata skor:**
+            - Jika rata-rata skor ≥ 3.5: Kategori 'Tinggi'
+            - Jika rata-rata skor < 3.5: Kategori 'Rendah'
             """)
         
         # Input sliders for each component
