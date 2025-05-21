@@ -7,3 +7,4 @@ dtreeviz==2.2.1
 matplotlib==3.10.3
 seaborn==0.13.2
 xlsxwriter==3.2.3
+openpyxl==2.6.2
