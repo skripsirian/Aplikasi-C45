@@ -7,9 +7,11 @@ import os
 from sklearn.model_selection import train_test_split
 import numpy as np
 import random
+import time
 import graphviz
 import re
 import io
+import matplotlib.colors as mcolors
 
 # Function to create decision tree visualization that matches the image
 def create_decision_tree_viz(tree):
@@ -102,8 +104,26 @@ def convert_tree_to_text(tree, indent=0):
     
     return text.rstrip()
 
+# Function to determine friendship type based on scores
+def determine_friendship_type(scores):
+    # Extract individual scores
+    keberagaman, komunikasi, empati, kerjasama, konflik, dukungan, kepemimpinan = scores
+    
+    # Calculate average score
+    avg_score = sum(scores) / len(scores)
+    
+    # Determine friendship type based on scores and patterns
+    if avg_score >= 4.0 and min(scores) >= 3.5:
+        return "Teman Sejati", "Memiliki hubungan pertemanan yang sangat kuat dan seimbang di semua aspek"
+    elif avg_score >= 3.5 and (komunikasi >= 4 or kerjasama >= 4):
+        return "Teman Saling Membutuhkan", "Memiliki hubungan pertemanan yang saling menguntungkan dengan fokus pada komunikasi dan kerjasama"
+    elif avg_score >= 3.0 and (komunikasi >= 3.5 or empati >= 3.5):
+        return "Teman Satu Arah", "Memiliki hubungan pertemanan yang lebih dominan pada satu pihak"
+    else:
+        return "Teman Tidak Sehat", "Memiliki pola pertemanan yang perlu diperbaiki"
+
 # Fungsi untuk menghitung kategori pola pertemanan
-def calculate_friendship_category(row, threshold=3.5):
+def calculate_friendship_category(row, threshold_high=4.0, threshold_low=3.0):
     # Komponen yang dinilai
     components = [
         'Keberagaman Teman',
@@ -120,51 +140,118 @@ def calculate_friendship_category(row, threshold=3.5):
         raise ValueError("Dataset harus memiliki semua komponen penilaian yang diperlukan")
     
     # Hitung rata-rata skor
-    total_score = sum(row[comp] for comp in components)
+    scores = [float(row[comp]) for comp in components]
+    total_score = sum(scores)
     average_score = total_score / len(components)
     
-    # Tentukan kategori berdasarkan threshold
-    return 'Tinggi' if average_score >= threshold else 'Rendah'
+    # Tentukan kategori dan tipe pertemanan
+    if average_score >= threshold_high:
+        category = 'Tinggi'
+    elif average_score >= threshold_low:
+        category = 'Sedang'
+    else:
+        category = 'Rendah'
+        
+    friendship_type, friendship_desc = determine_friendship_type(scores)
+    
+    return category, friendship_type, friendship_desc
 
 # Fungsi Plot Confusion Matrix
-def plot_confusion_matrix(cm, classes=['Rendah', 'Tinggi']):
-    plt.figure(figsize=(10, 8))
+def plot_confusion_matrix(cm, classes=['Rendah', 'Sedang', 'Tinggi']):
+    plt.figure(figsize=(12, 10))
     
     # Calculate percentages for annotations
     cm_sum = np.sum(cm, axis=1, keepdims=True)
     cm_perc = np.zeros_like(cm, dtype=float)
     total_samples = np.sum(cm)  # Total samples
     
-    # Calculate percentages, handling division by zero
+    # Calculate row percentages and overall percentages
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
             if cm_sum[i] > 0:
-                cm_perc[i, j] = (cm[i, j] / total_samples) * 100  # Percentage from total
+                cm_perc[i, j] = (cm[i, j] / cm_sum[i]) * 100  # Percentage from class total
             else:
                 cm_perc[i, j] = 0
+    
+    # Calculate overall accuracy
+    accuracy = np.trace(cm) / total_samples * 100 if total_samples > 0 else 0
+    
+    # Create a better colormap that works well with three classes
+    colors = plt.cm.Blues(np.linspace(0, 1, 128))
+    colors = np.vstack((plt.cm.Reds_r(np.linspace(0, 1, 128)), colors))
+    custom_cmap = mcolors.LinearSegmentedColormap.from_list('custom_Blues_Reds', colors)
     
     # Create annotations with both count and percentage
     annot = np.empty_like(cm, dtype=str)
     for i in range(cm.shape[0]):
         for j in range(cm.shape[1]):
+            # Format: count (row %)
             annot[i, j] = f'{cm[i, j]}\n({cm_perc[i, j]:.1f}%)'
     
-    # Plot heatmap
-    sns.heatmap(cm, annot=annot, fmt='', cmap='RdYlGn',
+    # Plot heatmap with custom colormap
+    ax = sns.heatmap(cm, annot=annot, fmt='', cmap=custom_cmap,
                 xticklabels=classes, yticklabels=classes,
-                annot_kws={'va': 'center'})
+                annot_kws={'va': 'center', 'ha': 'center'},
+                linewidths=1.5, linecolor='white', cbar=True)
     
-    plt.title(f'Confusion Matrix\nTotal Data yang Diuji: {total_samples}', pad=20)
-    plt.ylabel('Aktual')
-    plt.xlabel('Prediksi')
-
-    # Add total samples text
-    plt.text(0.5, -0.2, f'Total Sampel: {total_samples}', 
-             horizontalalignment='center',
-             transform=plt.gca().transAxes)
-
+    # Add title with accuracy information
+    plt.title(f'Confusion Matrix\nAkurasi: {accuracy:.1f}%\nTotal Data: {total_samples}', 
+              fontsize=16, pad=20)
+    
+    plt.ylabel('Aktual', fontsize=14)
+    plt.xlabel('Prediksi', fontsize=14)
+    
+    # Calculate class-specific metrics
+    class_metrics = []
+    for i, class_name in enumerate(classes):
+        true_pos = cm[i, i]
+        false_pos = np.sum(cm[:, i]) - true_pos
+        false_neg = np.sum(cm[i, :]) - true_pos
+        true_neg = np.sum(cm) - true_pos - false_pos - false_neg
+        
+        # Calculate metrics (handle division by zero)
+        precision = true_pos / (true_pos + false_pos) if (true_pos + false_pos) > 0 else 0
+        recall = true_pos / (true_pos + false_neg) if (true_pos + false_neg) > 0 else 0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        
+        class_metrics.append({
+            'class': class_name,
+            'precision': precision,
+            'recall': recall,
+            'f1': f1
+        })
+    
+    # Add a metrics summary table at the bottom
+    table_data = []
+    table_data.append(['Kelas', 'Precision', 'Recall', 'F1-Score'])
+    for i, metrics in enumerate(class_metrics):
+        table_data.append([
+            metrics['class'],
+            f"{metrics['precision']:.2f}",
+            f"{metrics['recall']:.2f}",
+            f"{metrics['f1']:.2f}"
+        ])
+    
+    # Create the table
+    table = plt.table(
+        cellText=table_data,
+        cellLoc='center',
+        loc='bottom',
+        bbox=[0.0, -0.35, 1.0, 0.2]
+    )
+    
+    table.auto_set_font_size(False)
+    table.set_fontsize(12)
+    table.scale(1, 1.5)
+    
+    # Add diagonal line to highlight correct predictions
+    ax.plot([0, len(classes)], [0, len(classes)], "k--", alpha=0.3)
+    
+    # Create directory if it doesn't exist
     if not os.path.exists('temp'):
         os.makedirs('temp')
+    
+    plt.tight_layout()
     plt.savefig('temp/confusion_matrix.png', bbox_inches='tight', dpi=300)
     plt.close()
 
@@ -210,8 +297,8 @@ def display_metrics(report, acc):
     st.markdown("#### 📈 Metrik per Kelas")
     try:
         class_metrics = []
-        # Pastikan kelas 'Rendah' selalu ditampilkan terlebih dahulu
-        for class_name in ['Rendah', 'Tinggi']:
+        # Tampilkan kelas dalam urutan yang konsisten
+        for class_name in ['Rendah', 'Sedang', 'Tinggi']:
             if class_name in report:
                 metrics = report[class_name]
                 # Pastikan semua nilai ada dengan nilai default 0
@@ -233,24 +320,47 @@ def display_metrics(report, acc):
             def color_class(val):
                 if val == 'Tinggi':
                     return 'background-color: #28a745; color: white'
+                elif val == 'Sedang':
+                    return 'background-color: #ffc107; color: black'
                 elif val == 'Rendah':
                     return 'background-color: #dc3545; color: white'
                 return ''
 
-            styled_df = metrics_df.style.applymap(color_class, subset=['Kelas'])
+            styled_df = metrics_df.style.map(color_class, subset=['Kelas'])
             st.dataframe(styled_df, use_container_width=True)
 
     except Exception as e:
         pass  # Abaikan error jika terjadi
 
 # Function to predict based on the leaf node where data falls
-def predict_from_leaf_node(instance, tree, node_path=None):
+def predict_from_leaf_node(instance, tree, node_path=None, leaf_stats=None):
     if node_path is None:
         node_path = []
     
     # If we've reached a leaf node (not a dictionary)
     if not isinstance(tree, dict):
-        return tree, node_path
+        # For C4.5, the leaf node contains the majority class
+        # In our implementation, tree is the majority class at the leaf
+        leaf_class = tree
+        
+        # Extract statistics if available (for display purposes)
+        stats = {}
+        if isinstance(leaf_stats, dict) and leaf_class in leaf_stats:
+            stats = {
+                "class": leaf_class,
+                "count": leaf_stats[leaf_class],
+                "total": sum(leaf_stats.values()),
+                "probability": leaf_stats[leaf_class] / sum(leaf_stats.values()) if sum(leaf_stats.values()) > 0 else 0
+            }
+        else:
+            stats = {
+                "class": leaf_class,
+                "count": 1,
+                "total": 1,
+                "probability": 1.0
+            }
+            
+        return leaf_class, node_path, stats
     
     # Get the feature to split on
     feature = list(tree.keys())[0]
@@ -275,7 +385,7 @@ def predict_from_leaf_node(instance, tree, node_path=None):
                 "branch": "True",
                 "description": f"{feature_name} = {instance_value} ≤ {threshold} → True"
             })
-            return predict_from_leaf_node(instance, tree[feature][list(tree[feature].keys())[0]], node_path)
+            return predict_from_leaf_node(instance, tree[feature][list(tree[feature].keys())[0]], node_path, leaf_stats)
         else:
             node_path.append({
                 "feature": feature_name,
@@ -285,7 +395,7 @@ def predict_from_leaf_node(instance, tree, node_path=None):
                 "branch": "False",
                 "description": f"{feature_name} = {instance_value} > {threshold} → False"
             })
-            return predict_from_leaf_node(instance, tree[feature][list(tree[feature].keys())[1]], node_path)
+            return predict_from_leaf_node(instance, tree[feature][list(tree[feature].keys())[1]], node_path, leaf_stats)
     else:
         # If there's no threshold, just follow the first branch
         node_path.append({
@@ -296,7 +406,7 @@ def predict_from_leaf_node(instance, tree, node_path=None):
             "branch": "",
             "description": f"Feature: {feature}"
         })
-        return predict_from_leaf_node(instance, tree[feature][list(tree[feature].keys())[0]], node_path)
+        return predict_from_leaf_node(instance, tree[feature][list(tree[feature].keys())[0]], node_path, leaf_stats)
 
 # Function to get leaf node statistics
 def get_leaf_node_stats(tree, stats=None, path=None):
@@ -337,6 +447,101 @@ def get_leaf_node_stats(tree, stats=None, path=None):
     
     return stats
 
+# Function to collect leaf node class distributions
+def collect_leaf_node_stats(tree, X_train, y_train):
+    # Initialize a dictionary to store leaf node statistics
+    leaf_stats = {}
+    
+    # Function to traverse the tree and find the leaf node for each instance
+    def find_leaf_node(instance, tree):
+        if not isinstance(tree, dict):
+            return tree  # Return the leaf node class
+        
+        # Get the feature to split on
+        feature = list(tree.keys())[0]
+        
+        # Extract feature name and threshold if it contains a threshold
+        match = re.search(r'(.*?) <= (.*)', feature)
+        if match:
+            feature_name, threshold = match.groups()
+            feature_name = feature_name.strip()
+            threshold = float(threshold)
+            
+            # Determine which branch to follow
+            if instance[feature_name] <= threshold:
+                return find_leaf_node(instance, tree[feature][list(tree[feature].keys())[0]])
+            else:
+                return find_leaf_node(instance, tree[feature][list(tree[feature].keys())[1]])
+        else:
+            # If there's no threshold, just follow the first branch
+            return find_leaf_node(instance, tree[feature][list(tree[feature].keys())[0]])
+    
+    # Process each training instance
+    for i in range(len(X_train)):
+        instance = X_train.iloc[i]
+        label = y_train.iloc[i]
+        
+        # Find the leaf node for this instance
+        leaf_node = find_leaf_node(instance, tree)
+        
+        # Create a unique identifier for this leaf node
+        leaf_id = str(leaf_node)
+        
+        # Initialize the leaf node statistics if not already present
+        if leaf_id not in leaf_stats:
+            leaf_stats[leaf_id] = {"Tinggi": 0, "Sedang": 0, "Rendah": 0}
+        
+        # Increment the count for this class
+        leaf_stats[leaf_id][label] += 1
+    
+    return leaf_stats
+
+def color_result(val):
+    if val == True:
+        return 'background-color: #28a745; color: white'
+    else:
+        return 'background-color: #dc3545; color: white'
+
+def color_target(val):
+    if val == 'Tinggi':
+        return 'background-color: #28a745; color: white'
+    elif val == 'Sedang':
+        return 'background-color: #ffc107; color: black'
+    elif val == 'Rendah':
+        return 'background-color: #dc3545; color: white'
+    return ''
+
+def color_score(val):
+    if val >= 4.0:
+        return 'background-color: rgba(40, 167, 69, 0.2)'
+    elif val >= 3.0:
+        return 'background-color: rgba(255, 193, 7, 0.2)'
+    else:
+        return 'background-color: rgba(220, 53, 69, 0.2)'
+                
+def color_friendship_type(val):
+    if val == "Teman Sejati":
+        return 'background-color: #28a745; color: white'
+    elif val == "Teman Saling Membutuhkan":
+        return 'background-color: #5cb85c; color: white'
+    elif val == "Teman Satu Arah":
+        return 'background-color: #ffc107; color: black'
+    else:
+        return 'background-color: #dc3545; color: white'
+
+# Add friendship type classification
+def get_friendship_type(row):
+    scores = [
+        float(row['Keberagaman Teman']),
+        float(row['Kemampuan Komunikasi']),
+        float(row['Empati dan Pengertian']),
+        float(row['Kerjasama dan Kolaborasi']),
+        float(row['Mengelola Konflik']),
+        float(row['Dukungan Sosial']),
+        float(row['Kepemimpinan dan Tanggung Jawab'])
+    ]
+    return determine_friendship_type(scores)[0]
+
 # Fungsi File Input & Klasifikasi
 def show_file_input():
     st.info("📤 Upload Dataset Mode")
@@ -376,7 +581,7 @@ def show_file_input():
 
         # Hitung target berdasarkan komponen penilaian
         try:
-            data['target'] = data.apply(calculate_friendship_category, axis=1)
+            data['target'], data['Tipe Pertemanan'], data['Deskripsi'] = zip(*data.apply(calculate_friendship_category, axis=1))
         except Exception as e:
             st.error(f"Error saat menghitung kategori: {str(e)}")
             return
@@ -573,15 +778,14 @@ def show_file_input():
         y = data_for_model['target'].str.title()  # Normalize to Title case
         
         # Check class distribution
-        class_counts = y.value_counts()
-        st.write("### 📊 Distribusi Kelas")
-        total_samples = len(y)
-        for class_name, count in class_counts.items():
-            percentage = (count / total_samples) * 100
+        class_distribution = y.value_counts()
+        st.write("### 📊 Distribusi Kelas Sebelum Balancing")
+        for class_name, count in class_distribution.items():
+            percentage = (count / len(y)) * 100
             st.write(f"Kelas '{class_name}': {count} sampel ({percentage:.1f}%)")
         
         # User input for test size
-        st.write("\n### 🎲 Pengaturan Test Size")
+        st.write("\n### 🎲 Pengaturan Test Size dan Balancing")
         col1, col2 = st.columns([2,1])
         with col1:
             test_size = st.slider(
@@ -602,6 +806,20 @@ def show_file_input():
             - Testing: {test_size*100:.0f}%
             """)
         
+        # Add balancing method selection
+        balancing_method = st.radio(
+            "Pilih metode balancing untuk data test:",
+            ["Balancing", "Normal (C4.5 Standard)"],
+            help="Pilih metode untuk menyeimbangkan distribusi kelas pada data test"
+        )
+        
+        # Add info about balancing methods
+        st.info("""
+        ℹ️ Tentang Metode Balancing:
+        - **Balancing**: Seimbangkan distribusi kelas pada data test dengan mengurangi jumlah sampel dari kelas mayoritas
+        - **Normal (C4.5 Standard)**: Gunakan algoritma C4.5 standar tanpa modifikasi distribusi kelas (sesuai implementasi asli)
+        """)
+        
         st.warning("""
         ⚠️ Catatan tentang Test Size:
         - Test size yang lebih besar memberikan evaluasi yang lebih representatif
@@ -614,7 +832,7 @@ def show_file_input():
         min_samples_per_class = 3  # minimum samples needed per class
         insufficient_classes = [
             f"'{class_name}' (hanya {count} sampel)" 
-            for class_name, count in class_counts.items() 
+            for class_name, count in class_distribution.items() 
             if count < min_samples_per_class
         ]
         
@@ -622,33 +840,84 @@ def show_file_input():
         X = X.reset_index(drop=True)
         y = y.reset_index(drop=True)
         
+        # Implement balanced train-test split
         # Split data into training and testing sets
         if insufficient_classes:
             st.warning(f"⚠️ Tidak bisa melakukan stratified split karena jumlah sampel tidak mencukupi untuk kelas: {', '.join(insufficient_classes)}")
             st.info(f"ℹ️ Dibutuhkan minimal {min_samples_per_class} sampel per kelas untuk stratified split")
             st.info("ℹ️ Beralih ke random split...")
             
+            # Use a random seed based on current time for truly random splits each time
+            random_seed = int(time.time()) % 10000
+            
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y,
                 test_size=test_size,
-                random_state=42
+                random_state=random_seed
             )
         else:
             try:
+                # Use a random seed based on current time for truly random splits each time
+                random_seed = int(time.time()) % 10000
+                
+                # Use stratified sampling to maintain class distribution
                 X_train, X_test, y_train, y_test = train_test_split(
                     X, y,
                     test_size=test_size,
                     stratify=y,
-                    random_state=42
+                    random_state=random_seed
                 )
-                st.success("✅ Berhasil melakukan stratified split")
+                
+                # Check if we need to balance the test set further
+                test_class_dist = y_test.value_counts()
+                min_samples = test_class_dist.min()
+                
+                # Apply balancing based on selected method
+                if balancing_method == "Balancing":
+                    st.warning("⚠️ Melakukan downsampling pada data test untuk menyeimbangkan kelas...")
+                    
+                    # Create balanced test set by sampling from each class
+                    balanced_indices = []
+                    for class_name in sorted(test_class_dist.index):
+                        class_indices = y_test[y_test == class_name].index.tolist()
+                        # If we have more samples than the minimum, downsample
+                        if len(class_indices) > min_samples:
+                            sampled_indices = random.sample(class_indices, min_samples)
+                            balanced_indices.extend(sampled_indices)
+                        else:
+                            # Otherwise use all samples
+                            balanced_indices.extend(class_indices)
+                    
+                    # Create balanced test set
+                    X_test_balanced = X_test.loc[balanced_indices]
+                    y_test_balanced = y_test.loc[balanced_indices]
+                    
+                    # Update the test sets
+                    X_test = X_test_balanced
+                    y_test = y_test_balanced
+                    
+                    st.success("✅ Balancing selesai! Data test sekarang memiliki distribusi yang lebih seimbang.")
+                
+                elif balancing_method == "Normal (C4.5 Standard)":
+                    st.info("ℹ️ Menggunakan algoritma C4.5 standar tanpa modifikasi distribusi kelas (sesuai implementasi asli).")
+                    # Show the distribution
+                    st.write("### 📊 Distribusi Kelas pada Data Test")
+                    for class_name, count in test_class_dist.items():
+                        percentage = (count / len(y_test) * 100)
+                        st.write(f"Kelas '{class_name}': {count} sampel ({percentage:.1f}%)")
+                
+                st.success(f"✅ Berhasil melakukan stratified split dengan random seed: {random_seed}")
             except Exception as e:
                 st.warning(f"⚠️ Terjadi kesalahan saat splitting: {str(e)}")
                 st.info("ℹ️ Beralih ke random split standar...")
+                
+                # Use a random seed based on current time for truly random splits each time
+                random_seed = int(time.time()) % 10000
+                
                 X_train, X_test, y_train, y_test = train_test_split(
                     X, y,
                     test_size=test_size,
-                    random_state=42
+                    random_state=random_seed
                 )
         
         # Display split results with class distribution
@@ -664,6 +933,8 @@ def show_file_input():
                 percentage = (count / len(y_train)) * 100
                 if class_name == 'Rendah':
                     st.error(f"- {class_name}: {count} sampel ({percentage:.1f}%)")
+                elif class_name == 'Sedang':
+                    st.warning(f"- {class_name}: {count} sampel ({percentage:.1f}%)")
                 else:
                     st.success(f"- {class_name}: {count} sampel ({percentage:.1f}%)")
             
@@ -676,8 +947,95 @@ def show_file_input():
                 percentage = (count / len(y_test)) * 100
                 if class_name == 'Rendah':
                     st.error(f"- {class_name}: {count} sampel ({percentage:.1f}%)")
+                elif class_name == 'Sedang':
+                    st.warning(f"- {class_name}: {count} sampel ({percentage:.1f}%)")
                 else:
                     st.success(f"- {class_name}: {count} sampel ({percentage:.1f}%)")
+        
+        # Add visualization of class distribution
+        st.write("\n### 📊 Visualisasi Distribusi Kelas")
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        
+        # Training data distribution
+        train_counts = pd.Series(y_train).value_counts().sort_index()
+        colors = ['#dc3545', '#ffc107', '#28a745']  # Red, Yellow, Green
+        ax1.bar(train_counts.index, train_counts.values, color=colors[:len(train_counts)])
+        ax1.set_title('Distribusi Kelas - Data Training')
+        ax1.set_ylabel('Jumlah Sampel')
+        
+        # Testing data distribution
+        test_counts = pd.Series(y_test).value_counts().sort_index()
+        ax2.bar(test_counts.index, test_counts.values, color=colors[:len(test_counts)])
+        ax2.set_title('Distribusi Kelas - Data Testing')
+        
+        # Add percentage labels
+        for i, v in enumerate(train_counts.values):
+            ax1.text(i, v + 0.5, f"{v} ({v/sum(train_counts.values)*100:.1f}%)", 
+                    ha='center', va='bottom')
+        
+        for i, v in enumerate(test_counts.values):
+            ax2.text(i, v + 0.5, f"{v} ({v/sum(test_counts.values)*100:.1f}%)", 
+                    ha='center', va='bottom')
+        
+        plt.tight_layout()
+        st.pyplot(fig)
+        
+        # Add preview of test data
+        st.write("\n### 🔍 Preview Data Testing")
+        with st.expander("Lihat Data Testing", expanded=True):
+            # Create a preview dataframe with relevant columns
+            test_data_preview = data.iloc[X_test.index].copy()
+            
+            # Add feature columns
+            feature_columns = [
+                'Keberagaman Teman',
+                'Kemampuan Komunikasi',
+                'Empati dan Pengertian',
+                'Kerjasama dan Kolaborasi',
+                'Mengelola Konflik',
+                'Dukungan Sosial',
+                'Kepemimpinan dan Tanggung Jawab'
+            ]
+            
+            # Calculate average score
+            test_data_preview['Rata-rata Skor'] = test_data_preview[feature_columns].mean(axis=1).round(2)
+            
+            # Select columns for display
+            preview_columns = ['No', 'Nama', 'Jenis Kelamin', 'Kelas', 'target', 'Rata-rata Skor', 'Tipe Pertemanan']
+            if all(col in test_data_preview.columns for col in preview_columns):
+                test_preview_df = test_data_preview[preview_columns]
+            else:
+                # If some columns are missing, use what's available
+                available_columns = [col for col in preview_columns if col in test_data_preview.columns]
+                test_preview_df = test_data_preview[available_columns]
+            
+            # Apply styling
+            def color_target_value(val):
+                if val == 'Tinggi':
+                    return 'background-color: #28a745; color: white'
+                elif val == 'Sedang':
+                    return 'background-color: #ffc107; color: black'
+                elif val == 'Rendah':
+                    return 'background-color: #dc3545; color: white'
+                return ''
+            
+            def color_score_value(val):
+                if val >= 4.0:
+                    return 'background-color: rgba(40, 167, 69, 0.2)'
+                elif val >= 3.0:
+                    return 'background-color: rgba(255, 193, 7, 0.2)'
+                else:
+                    return 'background-color: rgba(220, 53, 69, 0.2)'
+            
+            # Apply the styling if 'target' and 'Rata-rata Skor' columns exist
+            if 'target' in test_preview_df.columns and 'Rata-rata Skor' in test_preview_df.columns:
+                styled_preview = test_preview_df.style.map(color_target_value, subset=['target']).map(color_score_value, subset=['Rata-rata Skor'])
+                st.dataframe(styled_preview, use_container_width=True)
+            else:
+                st.dataframe(test_preview_df, use_container_width=True)
+            
+            st.info(f"📊 Data preview menampilkan {len(test_preview_df)} data yang akan digunakan untuk testing.")
+            st.info("ℹ️ Data ini akan digunakan untuk mengevaluasi model setelah klasifikasi dijalankan.")
 
         if st.button("Jalankan Klasifikasi"):
             # Store a flag in session state to indicate classification has been run
@@ -686,26 +1044,59 @@ def show_file_input():
             model = DecisionTreeC45()
             model.fit(X_train, y_train)
             
+            # Collect leaf node statistics from training data
+            leaf_stats = collect_leaf_node_stats(model.tree, X_train, y_train)
+            
             # Make predictions using leaf node majority class
             test_preds = []
             prediction_paths = []
-            
-            # Get leaf node statistics
-            leaf_stats = get_leaf_node_stats(model.tree)
+            prediction_stats = []
+            prediction_probabilities = []
             
             # Predict each test instance
             for idx, row in X_test.iterrows():
-                prediction, path = predict_from_leaf_node(row, model.tree)
+                # First predict to get the leaf class
+                prediction, path, stats = predict_from_leaf_node(row, model.tree)
+                # Then use the prediction to get the correct leaf stats
+                leaf_id = str(prediction)
+                leaf_node_stats = leaf_stats.get(leaf_id, {})
+                
+                # Calculate probabilities for each class
+                total_samples = sum(leaf_node_stats.values()) if leaf_node_stats else 1
+                prob_tinggi = leaf_node_stats.get('Tinggi', 0) / total_samples if total_samples > 0 else 0
+                prob_sedang = leaf_node_stats.get('Sedang', 0) / total_samples if total_samples > 0 else 0
+                prob_rendah = leaf_node_stats.get('Rendah', 0) / total_samples if total_samples > 0 else 0
+                
+                # Store the probabilities
+                class_probabilities = {
+                    'Tinggi': prob_tinggi,
+                    'Sedang': prob_sedang,
+                    'Rendah': prob_rendah
+                }
+                prediction_probabilities.append(class_probabilities)
+                
+                # Re-predict with the correct leaf stats
+                prediction, path, stats = predict_from_leaf_node(row, model.tree, leaf_stats=leaf_node_stats)
                 test_preds.append(prediction)
                 prediction_paths.append(path)
+                prediction_stats.append(stats)
             
             # Convert predictions to series for evaluation
             preds = pd.Series(test_preds, index=X_test.index)
             
             # Calculate metrics using our custom predictions
             from sklearn.metrics import classification_report, confusion_matrix
+            
+            # Check if we have all three classes in our test data
+            available_classes = sorted(list(set(list(y_test) + list(preds))))
+            
+            # Generate report with available classes
             report = classification_report(y_test, preds, output_dict=True)
-            cm = confusion_matrix(y_test, preds, labels=['Rendah', 'Tinggi'])
+            
+            # For confusion matrix, ensure we have all three classes if possible
+            labels = ['Rendah', 'Sedang', 'Tinggi']
+            cm = confusion_matrix(y_test, preds, labels=labels)
+            
             metrics = {'accuracy': (preds == y_test).mean()}
             
             # Store everything in session state
@@ -718,7 +1109,10 @@ def show_file_input():
             st.session_state.metrics = metrics
             st.session_state.cm = cm
             st.session_state.prediction_paths = prediction_paths
+            st.session_state.prediction_stats = prediction_stats
+            st.session_state.prediction_probabilities = prediction_probabilities
             st.session_state.test_names = data.iloc[X_test.index]['Nama'].tolist()
+            st.session_state.leaf_stats = leaf_stats
             st.session_state.feature_columns = [
                 'Keberagaman Teman',
                 'Kemampuan Komunikasi',
@@ -752,48 +1146,23 @@ def show_file_input():
                 'Nama': st.session_state.test_data['Nama'],
                 'Jenis Kelamin': st.session_state.test_data['Jenis Kelamin'],
                 'Kelas': st.session_state.test_data['Kelas'],
-                'Rata-rata Skor': st.session_state.avg_scores.round(2),
                 'Aktual': st.session_state.y_test,
                 'Prediksi': st.session_state.preds,
-                'Benar/Salah': st.session_state.y_test == st.session_state.preds
+                'Benar/Salah': st.session_state.y_test == st.session_state.preds,
+                'Rata-rata Skor': st.session_state.test_data[st.session_state.feature_columns].astype(float).mean(axis=1).round(2),
+                'Tipe Pertemanan': st.session_state.test_data.apply(get_friendship_type, axis=1)
             })
 
-            def color_pred(val):
-                if val == 'Tinggi':
-                    return 'background-color: #28a745; color: white'
-                elif val == 'Rendah':
-                    return 'background-color: #dc3545; color: white'
-                return ''
+            # Limit the number of rows displayed to avoid React rendering errors
+            max_rows_to_display = 20
+            if len(results_df) > max_rows_to_display:
+                st.warning(f"⚠️ Menampilkan {max_rows_to_display} dari {len(results_df)} baris data untuk menghindari error rendering.")
+                display_df = results_df.head(max_rows_to_display)
+            else:
+                display_df = results_df
 
-            # Add score-based styling
-            def color_score(val):
-                if val >= 3.5:  # Fixed threshold
-                    return 'background-color: rgba(40, 167, 69, 0.2)'
-                return 'background-color: rgba(220, 53, 69, 0.2)'
-                
-            # Add result styling
-            def color_result(val):
-                if val == True:
-                    return 'background-color: #28a745; color: white'
-                else:
-                    return 'background-color: #dc3545; color: white'
-
-            styled_results = results_df.style\
-                .applymap(color_pred, subset=['Prediksi', 'Aktual'])\
-                .applymap(color_score, subset=['Rata-rata Skor'])\
-                .applymap(color_result, subset=['Benar/Salah'])
-            
-            # Display threshold information
-            st.write("\n### 🎯 Informasi Threshold")
-            st.info("""
-            Threshold yang digunakan untuk menentukan kategori:
-            - Jika rata-rata skor ≥ 3.5: Kategori 'Tinggi'
-            - Jika rata-rata skor < 3.5: Kategori 'Rendah'
-            """)
-            
-            # Display total tested data
-            st.write(f"### 📊 Total Data yang Diuji: {len(st.session_state.X_test)}")
-            st.write("Hasil Prediksi (Data Testing):")
+            # Apply styling to results
+            styled_results = display_df.style.map(color_target, subset=['Aktual', 'Prediksi']).map(color_result, subset=['Benar/Salah']).map(color_score, subset=['Rata-rata Skor']).map(color_friendship_type, subset=['Tipe Pertemanan'])
             st.dataframe(styled_results, use_container_width=True)
 
             st.markdown("### Evaluasi Model")
@@ -805,8 +1174,8 @@ def show_file_input():
             # Display confusion matrix summary
             st.write("\n### 📑 Ringkasan Confusion Matrix")
             total_samples = np.sum(st.session_state.cm)
-            for i, actual_class in enumerate(['Rendah', 'Tinggi']):
-                for j, pred_class in enumerate(['Rendah', 'Tinggi']):
+            for i, actual_class in enumerate(['Rendah', 'Sedang', 'Tinggi']):
+                for j, pred_class in enumerate(['Rendah', 'Sedang', 'Tinggi']):
                     count = st.session_state.cm[i, j]
                     percentage = (count / total_samples) * 100
                     if actual_class == pred_class:
@@ -903,88 +1272,6 @@ def show_file_input():
                     <h4>{icon} Prediksi {'Benar' if is_correct else 'Salah'}</h4>
                 </div>
                 """, unsafe_allow_html=True)
-                
-                # Add what-if analysis section
-                st.markdown("### 🔄 Simulasi Perubahan Variabel")
-                st.info("Ubah nilai variabel untuk melihat bagaimana prediksi berubah")
-                
-                # Create a form for what-if analysis
-                with st.form("what_if_form"):
-                    # Create a copy of the selected data for modification
-                    modified_data = selected_data.copy()
-                    
-                    # Create sliders for each feature
-                    st.markdown("#### Ubah Nilai Variabel:")
-                    cols = st.columns(2)
-                    
-                    features = list(modified_data.index)
-                    modified_values = {}
-                    
-                    for i, feature in enumerate(features):
-                        with cols[i % 2]:
-                            modified_values[feature] = st.slider(
-                                f"{feature}", 
-                                min_value=1, 
-                                max_value=5, 
-                                value=int(modified_data[feature]),
-                                key=f"what_if_{feature}"
-                            )
-                    
-                    # Submit button
-                    submitted = st.form_submit_button("Simulasikan Perubahan")
-                    
-                    if submitted:
-                        # Update the modified data
-                        for feature, value in modified_values.items():
-                            modified_data[feature] = value
-                        
-                        # Make a new prediction
-                        new_prediction, new_path = predict_from_leaf_node(modified_data, st.session_state.model.tree)
-                        
-                        # Store the results
-                        st.session_state.what_if_prediction = new_prediction
-                        st.session_state.what_if_path = new_path
-                        st.session_state.what_if_data = modified_data
-                        st.rerun()
-                
-                # Display what-if results if available
-                if 'what_if_prediction' in st.session_state:
-                    st.markdown("#### Hasil Simulasi:")
-                    
-                    # Compare original and modified values
-                    st.markdown("##### Perbandingan Nilai:")
-                    comparison_df = pd.DataFrame({
-                        'Variabel': features,
-                        'Nilai Asli': [selected_data[f] for f in features],
-                        'Nilai Baru': [st.session_state.what_if_data[f] for f in features],
-                        'Perubahan': [st.session_state.what_if_data[f] - selected_data[f] for f in features]
-                    })
-                    
-                    # Style the comparison dataframe
-                    def color_change(val):
-                        if val > 0:
-                            return 'background-color: rgba(40, 167, 69, 0.2)'
-                        elif val < 0:
-                            return 'background-color: rgba(220, 53, 69, 0.2)'
-                        return ''
-                    
-                    styled_comparison = comparison_df.style.applymap(color_change, subset=['Perubahan'])
-                    st.dataframe(styled_comparison, use_container_width=True)
-                    
-                    # Show the new prediction
-                    st.markdown("##### Prediksi Baru:")
-                    color = "#28a745" if st.session_state.what_if_prediction == "Tinggi" else "#dc3545"
-                    st.markdown(f"""
-                    <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color}; color: white; text-align: center;'>
-                        <h4>Prediksi Baru: {st.session_state.what_if_prediction}</h4>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Show if the prediction changed
-                    if st.session_state.what_if_prediction != selected_prediction:
-                        st.success(f"✅ Prediksi berubah dari {selected_prediction} menjadi {st.session_state.what_if_prediction}")
-                    else:
-                        st.info(f"ℹ️ Prediksi tetap sama: {selected_prediction}")
             
             # Add friendship compatibility analysis
             st.markdown("### 👫 Analisis Kesesuaian Pertemanan")
@@ -1007,16 +1294,24 @@ def show_file_input():
                         st.warning("⚠️ Pilih dua orang yang berbeda untuk analisis kesesuaian")
                     else:
                         # Get the indices of the selected people
-                        idx1 = st.session_state.test_data[st.session_state.test_data['Nama'] == person1].index[0]
-                        idx2 = st.session_state.test_data[st.session_state.test_data['Nama'] == person2].index[0]
+                        idx1 = st.session_state.test_names.index(person1)
+                        idx2 = st.session_state.test_names.index(person2)
                         
                         # Get the data for both people
-                        data1 = st.session_state.X_test.loc[idx1]
-                        data2 = st.session_state.X_test.loc[idx2]
+                        data1 = st.session_state.X_test.iloc[idx1]
+                        data2 = st.session_state.X_test.iloc[idx2]
                         
                         # Get their predictions
-                        pred1 = st.session_state.preds.loc[idx1]
-                        pred2 = st.session_state.preds.loc[idx2]
+                        pred1 = st.session_state.preds.iloc[idx1]
+                        pred2 = st.session_state.preds.iloc[idx2]
+                        
+                        # Get their friendship types
+                        scores1 = [data1[col] for col in st.session_state.feature_columns]
+                        scores2 = [data2[col] for col in st.session_state.feature_columns]
+                        
+                        # Calculate combined scores for friendship type determination
+                        combined_scores = [(s1 + s2) / 2 for s1, s2 in zip(scores1, scores2)]
+                        friendship_type = determine_friendship_type(combined_scores)[0]
                         
                         # Store the results
                         st.session_state.person1_data = data1
@@ -1025,6 +1320,7 @@ def show_file_input():
                         st.session_state.person2_name = person2
                         st.session_state.person1_pred = pred1
                         st.session_state.person2_pred = pred2
+                        st.session_state.friendship_type = friendship_type
                         st.rerun()
             
             # Display compatibility analysis if available
@@ -1034,25 +1330,36 @@ def show_file_input():
                 # Compare the data
                 st.markdown("##### Perbandingan Profil:")
                 
-                # Create comparison dataframe
-                features = st.session_state.person1_data.index.tolist()
+                # Create comparison dataframe with only numeric features
+                numeric_features = [
+                    'Keberagaman Teman',
+                    'Kemampuan Komunikasi',
+                    'Empati dan Pengertian',
+                    'Kerjasama dan Kolaborasi',
+                    'Mengelola Konflik',
+                    'Dukungan Sosial',
+                    'Kepemimpinan dan Tanggung Jawab'
+                ]
+                
                 comparison_df = pd.DataFrame({
-                    'Variabel': features,
-                    f'{st.session_state.person1_name}': [st.session_state.person1_data[f] for f in features],
-                    f'{st.session_state.person2_name}': [st.session_state.person2_data[f] for f in features],
-                    'Perbedaan': [abs(st.session_state.person1_data[f] - st.session_state.person2_data[f]) for f in features]
+                    'Variabel': numeric_features,
+                    f'{st.session_state.person1_name}': [float(st.session_state.person1_data[f]) for f in numeric_features],
+                    f'{st.session_state.person2_name}': [float(st.session_state.person2_data[f]) for f in numeric_features],
+                    'Perbedaan': [abs(float(st.session_state.person1_data[f]) - float(st.session_state.person2_data[f])) for f in numeric_features]
                 })
                 
                 # Style the comparison dataframe
                 def color_difference(val):
-                    if val == 0:
-                        return 'background-color: rgba(40, 167, 69, 0.4)'
-                    elif val <= 1:
-                        return 'background-color: rgba(255, 193, 7, 0.2)'
-                    else:
-                        return 'background-color: rgba(220, 53, 69, 0.2)'
+                    if isinstance(val, (int, float)):
+                        if val == 0:
+                            return 'background-color: rgba(40, 167, 69, 0.4)'
+                        elif val <= 1:
+                            return 'background-color: rgba(255, 193, 7, 0.2)'
+                        else:
+                            return 'background-color: rgba(220, 53, 69, 0.2)'
+                    return ''
                 
-                styled_comparison = comparison_df.style.applymap(color_difference, subset=['Perbedaan'])
+                styled_comparison = comparison_df.style.map(color_difference, subset=['Perbedaan'])
                 st.dataframe(styled_comparison, use_container_width=True)
                 
                 # Calculate compatibility score (inverse of average difference)
@@ -1063,16 +1370,16 @@ def show_file_input():
                 st.markdown("##### Skor Kesesuaian:")
                 
                 # Determine compatibility level
-                if compatibility_score >= 80:
+                if compatibility_score >= 90:
                     compatibility_level = "Sangat Tinggi"
                     color = "#28a745"
-                elif compatibility_score >= 60:
+                elif compatibility_score >= 75:
                     compatibility_level = "Tinggi"
                     color = "#5cb85c"
-                elif compatibility_score >= 40:
+                elif compatibility_score >= 60:
                     compatibility_level = "Sedang"
                     color = "#ffc107"
-                elif compatibility_score >= 20:
+                elif compatibility_score >= 45:
                     compatibility_level = "Rendah"
                     color = "#f0ad4e"
                 else:
@@ -1086,14 +1393,14 @@ def show_file_input():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Display predictions for both people
+                # Display predictions and friendship types for both people
                 st.markdown("##### Prediksi Pola Pertemanan:")
                 col1, col2 = st.columns(2)
                 
                 with col1:
                     color1 = "#28a745" if st.session_state.person1_pred == "Tinggi" else "#dc3545"
                     st.markdown(f"""
-                    <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color1}; color: white; text-align: center;'>
+                    <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color1}; color: white; text-align: center; margin-bottom: 1rem;'>
                         <h4>{st.session_state.person1_name}: {st.session_state.person1_pred}</h4>
                     </div>
                     """, unsafe_allow_html=True)
@@ -1101,28 +1408,201 @@ def show_file_input():
                 with col2:
                     color2 = "#28a745" if st.session_state.person2_pred == "Tinggi" else "#dc3545"
                     st.markdown(f"""
-                    <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color2}; color: white; text-align: center;'>
+                    <div style='padding: 1rem; border-radius: 0.5rem; background-color: {color2}; color: white; text-align: center; margin-bottom: 1rem;'>
                         <h4>{st.session_state.person2_name}: {st.session_state.person2_pred}</h4>
                     </div>
                     """, unsafe_allow_html=True)
                 
-                # Provide recommendation based on compatibility and predictions
-                st.markdown("##### Rekomendasi:")
+                # Display combined friendship type
+                type_color = "#28a745" if st.session_state.friendship_type == "Teman Sejati" else "#5cb85c" if st.session_state.friendship_type == "Teman Saling Membutuhkan" else "#ffc107" if st.session_state.friendship_type == "Teman Satu Arah" else "#dc3545"
+                st.markdown(f"""
+                <div style='padding: 1rem; border-radius: 0.5rem; background-color: {type_color}; color: {'black' if st.session_state.friendship_type == "Teman Satu Arah" else 'white'}; text-align: center;'>
+                    <h4>Tipe Pertemanan: {st.session_state.friendship_type}</h4>
+                </div>
+                """, unsafe_allow_html=True)
                 
-                if compatibility_score >= 60:
-                    if st.session_state.person1_pred == "Tinggi" and st.session_state.person2_pred == "Tinggi":
-                        st.success(f"✅ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki kesesuaian yang baik dan keduanya memiliki pola pertemanan yang tinggi. Mereka sangat cocok untuk berteman.")
-                    elif st.session_state.person1_pred == "Tinggi" or st.session_state.person2_pred == "Tinggi":
-                        st.info(f"ℹ️ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki kesesuaian yang baik, tetapi salah satu memiliki pola pertemanan yang lebih tinggi. Mereka dapat saling membantu dalam mengembangkan keterampilan sosial.")
+                # Create a dataframe to analyze compatibility factors
+                compatibility_factors = []
+                
+                # Calculate factor scores based on differences
+                for feature in numeric_features:
+                    val1 = float(st.session_state.person1_data[feature])
+                    val2 = float(st.session_state.person2_data[feature])
+                    diff = abs(val1 - val2)
+                    
+                    # Determine compatibility level for this factor
+                    if diff == 0:
+                        level = "Sangat Tinggi"
+                        score = 5
+                        color = "#28a745"
+                    elif diff <= 0.5:
+                        level = "Tinggi"
+                        score = 4
+                        color = "#5cb85c"
+                    elif diff <= 1:
+                        level = "Sedang"
+                        score = 3
+                        color = "#ffc107"
+                    elif diff <= 1.5:
+                        level = "Rendah"
+                        score = 2
+                        color = "#f0ad4e"
                     else:
-                        st.warning(f"⚠️ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki kesesuaian yang baik, tetapi keduanya memiliki pola pertemanan yang rendah. Mereka mungkin nyaman bersama tetapi perlu mengembangkan keterampilan sosial.")
+                        level = "Sangat Rendah"
+                        score = 1
+                        color = "#dc3545"
+                    
+                    compatibility_factors.append({
+                        'Faktor': feature,
+                        'Nilai 1': val1,
+                        'Nilai 2': val2,
+                        'Perbedaan': diff,
+                        'Tingkat Kesesuaian': level,
+                        'Skor': score,
+                        'Color': color
+                    })
+                
+                # Create a dataframe for the factors
+                factors_df = pd.DataFrame(compatibility_factors)
+                
+                # Find strongest and weakest factors
+                strongest_factor = factors_df.loc[factors_df['Skor'].idxmax()]
+                weakest_factor = factors_df.loc[factors_df['Skor'].idxmin()]
+                
+                # Calculate average compatibility score
+                avg_compatibility = factors_df['Skor'].mean()
+                
+                # Add detailed analysis breakdown
+                st.markdown("#### 🔍 Detail Analisis Kesesuaian")
+                
+                # Display the factors in an interactive table
+                st.markdown("##### Analisis Faktor Kesesuaian:")
+                
+                # Display as a regular Streamlit dataframe instead of custom HTML
+                display_df = factors_df[['Faktor', 'Nilai 1', 'Nilai 2', 'Perbedaan', 'Tingkat Kesesuaian']].copy()
+                
+                # Define a function to style the Tingkat Kesesuaian column
+                def style_compatibility(val):
+                    if val == "Sangat Tinggi":
+                        return 'background-color: #28a745; color: white'
+                    elif val == "Tinggi":
+                        return 'background-color: #5cb85c; color: white'
+                    elif val == "Sedang":
+                        return 'background-color: #ffc107; color: black'
+                    elif val == "Rendah":
+                        return 'background-color: #f0ad4e; color: white'
+                    else:  # Sangat Rendah
+                        return 'background-color: #dc3545; color: white'
+                
+                # Apply styling
+                styled_df = display_df.style.map(style_compatibility, subset=['Tingkat Kesesuaian'])
+                
+                # Display the dataframe
+                st.dataframe(styled_df, use_container_width=True, height=300)
+                
+                # Create a radar chart of compatibility factors
+                st.markdown("##### Grafik Kesesuaian Faktor:")
+                
+                # Prepare data for radar chart
+                categories = factors_df['Faktor'].tolist()
+                values = factors_df['Skor'].tolist()
+                
+                # Create radar chart using matplotlib
+                fig = plt.figure(figsize=(8, 8))
+                ax = fig.add_subplot(111, polar=True)
+                
+                # Number of variables
+                N = len(categories)
+                
+                # What will be the angle of each axis in the plot (divide the plot / number of variables)
+                angles = [n / float(N) * 2 * np.pi for n in range(N)]
+                angles += angles[:1]  # Close the loop
+                
+                # Values for the chart
+                values = values + [values[0]]  # Close the loop
+                
+                # Draw the chart
+                ax.plot(angles, values, linewidth=2, linestyle='solid', label='Kesesuaian')
+                ax.fill(angles, values, alpha=0.25)
+                
+                # Fix axis to go in the right order and start at 12 o'clock
+                ax.set_theta_offset(np.pi / 2)
+                ax.set_theta_direction(-1)
+                
+                # Draw axis lines for each angle and label
+                ax.set_xticks(angles[:-1])
+                ax.set_xticklabels(categories, fontsize=9)
+                
+                # Draw y-axis labels (0-5)
+                ax.set_yticks([1, 2, 3, 4, 5])
+                ax.set_yticklabels(['1', '2', '3', '4', '5'])
+                ax.set_ylim(0, 5)
+                
+                # Add title
+                plt.title(f'Profil Kesesuaian: {st.session_state.person1_name} & {st.session_state.person2_name}', size=15)
+                
+                # Save to a temporary file and display
+                radar_chart_path = 'temp/radar_chart.png'
+                plt.savefig(radar_chart_path, bbox_inches='tight', dpi=100)
+                plt.close()
+                
+                st.image(radar_chart_path)
+                
+                # Add detailed interpretation using Streamlit components instead of HTML
+                st.markdown("##### Interpretasi Kesesuaian:")
+                
+                # Create columns for metrics
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Faktor Kesesuaian Tertinggi", strongest_factor['Faktor'], strongest_factor['Tingkat Kesesuaian'])
+                with col2:
+                    st.metric("Faktor Kesesuaian Terendah", weakest_factor['Faktor'], weakest_factor['Tingkat Kesesuaian'])
+                    
+                # Show average score
+                st.metric("Rata-rata Skor Kesesuaian", f"{avg_compatibility:.2f}/5.0")
+                
+                # Provide detailed recommendation based on the weakest factor
+                st.markdown("##### Rekomendasi Pengembangan:")
+                
+                recommendations = {
+                    'Keberagaman Teman': "Cobalah untuk memperluas lingkaran pertemanan bersama-sama dan terbuka terhadap teman-teman baru dengan latar belakang yang berbeda.",
+                    'Kemampuan Komunikasi': "Tingkatkan keterampilan komunikasi dengan saling mendengarkan secara aktif dan mengekspresikan pikiran dengan jelas.",
+                    'Empati dan Pengertian': "Kembangkan kemampuan untuk memahami perspektif satu sama lain dan menunjukkan empati dalam situasi yang sulit.",
+                    'Kerjasama dan Kolaborasi': "Lakukan lebih banyak aktivitas yang memerlukan kerjasama tim dan saling mendukung untuk mencapai tujuan bersama.",
+                    'Mengelola Konflik': "Pelajari cara menyelesaikan perbedaan pendapat dengan cara yang konstruktif dan menghindari konflik yang tidak perlu.",
+                    'Dukungan Sosial': "Tingkatkan dukungan emosional dan praktis satu sama lain, terutama saat menghadapi tantangan.",
+                    'Kepemimpinan dan Tanggung Jawab': "Kembangkan rasa tanggung jawab bersama dan kemampuan untuk saling memimpin dalam situasi yang berbeda."
+                }
+                
+                st.info(f"💡 **Fokus Pengembangan:** {weakest_factor['Faktor']}\n\n{recommendations.get(weakest_factor['Faktor'], 'Tidak ada rekomendasi spesifik.')}")
+                
+                # Add overall compatibility summary
+                st.markdown("##### Kesimpulan:")
+                
+                # Create a summary based on compatibility score
+                if compatibility_score >= 80:
+                    summary = f"{st.session_state.person1_name} dan {st.session_state.person2_name} memiliki tingkat kesesuaian yang sangat tinggi. Mereka memiliki banyak kesamaan dalam aspek-aspek penting pertemanan dan berpotensi untuk membangun hubungan yang sangat kuat dan berkelanjutan."
+                    summary_color = "#28a745"
+                elif compatibility_score >= 60:
+                    summary = f"{st.session_state.person1_name} dan {st.session_state.person2_name} memiliki tingkat kesesuaian yang tinggi. Meskipun ada beberapa perbedaan, mereka memiliki dasar yang kuat untuk membangun pertemanan yang baik."
+                    summary_color = "#5cb85c"
+                elif compatibility_score >= 40:
+                    summary = f"{st.session_state.person1_name} dan {st.session_state.person2_name} memiliki tingkat kesesuaian yang sedang. Ada beberapa kesamaan dan perbedaan yang signifikan, yang memerlukan usaha dari kedua belah pihak untuk mengembangkan pertemanan yang lebih kuat."
+                    summary_color = "#ffc107"
+                elif compatibility_score >= 20:
+                    summary = f"{st.session_state.person1_name} dan {st.session_state.person2_name} memiliki tingkat kesesuaian yang rendah. Ada banyak perbedaan yang perlu dijembatani, tetapi dengan komunikasi yang baik dan saling pengertian, pertemanan masih bisa berkembang."
+                    summary_color = "#f0ad4e"
                 else:
-                    if st.session_state.person1_pred == "Tinggi" and st.session_state.person2_pred == "Tinggi":
-                        st.warning(f"⚠️ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki perbedaan yang signifikan meskipun keduanya memiliki pola pertemanan yang tinggi. Mereka mungkin memiliki gaya pertemanan yang berbeda.")
-                    elif st.session_state.person1_pred == "Tinggi" or st.session_state.person2_pred == "Tinggi":
-                        st.warning(f"⚠️ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki perbedaan yang signifikan dan salah satu memiliki pola pertemanan yang lebih tinggi. Mereka mungkin menghadapi tantangan dalam berteman.")
-                    else:
-                        st.error(f"❌ {st.session_state.person1_name} dan {st.session_state.person2_name} memiliki perbedaan yang signifikan dan keduanya memiliki pola pertemanan yang rendah. Mereka mungkin mengalami kesulitan dalam membangun pertemanan yang baik.")
+                    summary = f"{st.session_state.person1_name} dan {st.session_state.person2_name} memiliki tingkat kesesuaian yang sangat rendah. Mereka memiliki perbedaan yang signifikan dalam banyak aspek pertemanan dan mungkin perlu usaha ekstra untuk membangun hubungan yang baik."
+                    summary_color = "#dc3545"
+                
+                # Use st.success, st.warning, st.error based on compatibility level
+                if compatibility_score >= 60:
+                    st.success(summary)
+                elif compatibility_score >= 40:
+                    st.warning(summary)
+                else:
+                    st.error(summary)
 
             st.subheader("Pohon Keputusan:")
             # Create and display decision tree visualization
